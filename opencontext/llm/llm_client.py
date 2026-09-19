@@ -7,7 +7,9 @@
 OpenContext module: llm_client
 """
 
+import asyncio
 from enum import Enum
+from numbers import Real
 from typing import Any, Dict, List
 
 from openai import APIError, AsyncOpenAI, OpenAI
@@ -264,16 +266,47 @@ class LLMClient:
             logger.error(f"OpenAI API async stream error: {e}")
             raise
 
+    def _doubao_output_dim(self, kwargs: Dict[str, Any]) -> int:
+        """Return the requested dense-vector dimension for Ark embeddings."""
+        output_dim = kwargs.get("output_dim", self.config.get("output_dim", 2048))
+        if output_dim is None:
+            output_dim = 2048
+        if isinstance(output_dim, bool) or not isinstance(output_dim, int) or output_dim <= 0:
+            raise ValueError("Doubao embedding output_dim must be a positive integer")
+        return output_dim
+
+    @staticmethod
+    def _extract_doubao_embedding(response: Any, output_dim: int) -> List[float]:
+        """Extract and strictly validate the single dense vector returned by Ark."""
+        data = getattr(response, "data", None)
+        embedding = getattr(data, "embedding", None)
+        if embedding is None and isinstance(data, dict):
+            embedding = data.get("embedding")
+
+        if not isinstance(embedding, (list, tuple)):
+            raise ValueError("Doubao embedding response did not contain one numeric vector")
+        if len(embedding) != output_dim:
+            raise ValueError(
+                f"Doubao embedding dimension mismatch: expected {output_dim}, got {len(embedding)}"
+            )
+        if any(isinstance(value, bool) or not isinstance(value, Real) for value in embedding):
+            raise ValueError("Doubao embedding response contained a non-numeric value")
+        return list(embedding)
+
     def _request_embedding(self, text: str, **kwargs) -> List[float]:
         try:
             if self.provider != LLMProvider.DOUBAO.value:
                 response = self.client.embeddings.create(model=self.model, input=[text])
                 embedding = response.data[0].embedding
             else:
+                output_dim = self._doubao_output_dim(kwargs)
                 response = self.client.multimodal_embeddings.create(
-                    model=self.model, input=[{"type": "text", "text": text}]
+                    model=self.model,
+                    input=[{"type": "text", "text": text}],
+                    dimensions=output_dim,
+                    encoding_format="float",
                 )
-                embedding = response.data.embedding
+                embedding = self._extract_doubao_embedding(response, output_dim)
 
             # Record token usage
             if hasattr(response, "usage") and response.usage:
@@ -297,14 +330,15 @@ class LLMClient:
                 except ImportError:
                     pass  # Monitoring module not installed or initialized
 
-            output_dim = kwargs.get("output_dim", self.config.get("output_dim", 0))
-            if output_dim and len(embedding) > output_dim:
-                import math
+            if self.provider != LLMProvider.DOUBAO.value:
+                output_dim = kwargs.get("output_dim", self.config.get("output_dim", 0))
+                if output_dim and len(embedding) > output_dim:
+                    import math
 
-                embedding = embedding[:output_dim]
-                norm = math.sqrt(sum(x**2 for x in embedding))
-                if norm > 0:
-                    embedding = [x / norm for x in embedding]
+                    embedding = embedding[:output_dim]
+                    norm = math.sqrt(sum(x**2 for x in embedding))
+                    if norm > 0:
+                        embedding = [x / norm for x in embedding]
 
             return embedding
         except APIError as e:
@@ -314,11 +348,15 @@ class LLMClient:
     async def _request_embedding_async(self, text: str, **kwargs) -> List[float]:
         try:
             if self.provider == LLMProvider.DOUBAO.value:
-                # Only ark has multimodal_embeddings
-                response = self.client.multimodal_embeddings.create(
-                    model=self.model, input=[{"type": "text", "text": text}]
+                output_dim = self._doubao_output_dim(kwargs)
+                response = await asyncio.to_thread(
+                    self.client.multimodal_embeddings.create,
+                    model=self.model,
+                    input=[{"type": "text", "text": text}],
+                    dimensions=output_dim,
+                    encoding_format="float",
                 )
-                embedding = response.data.embedding
+                embedding = self._extract_doubao_embedding(response, output_dim)
             else:
                 response = await self.async_client.embeddings.create(model=self.model, input=[text])
                 embedding = response.data[0].embedding
@@ -345,14 +383,15 @@ class LLMClient:
                 except ImportError:
                     pass  # Monitoring module not installed or initialized
 
-            output_dim = kwargs.get("output_dim", self.config.get("output_dim", 0))
-            if output_dim and len(embedding) > output_dim:
-                import math
+            if self.provider != LLMProvider.DOUBAO.value:
+                output_dim = kwargs.get("output_dim", self.config.get("output_dim", 0))
+                if output_dim and len(embedding) > output_dim:
+                    import math
 
-                embedding = embedding[:output_dim]
-                norm = math.sqrt(sum(x**2 for x in embedding))
-                if norm > 0:
-                    embedding = [x / norm for x in embedding]
+                    embedding = embedding[:output_dim]
+                    norm = math.sqrt(sum(x**2 for x in embedding))
+                    if norm > 0:
+                        embedding = [x / norm for x in embedding]
 
             return embedding
         except APIError as e:
@@ -478,13 +517,15 @@ class LLMClient:
             elif self.llm_type == LLMType.EMBEDDING:
                 # Test with a simple text
                 if self.provider == LLMProvider.DOUBAO.value:
+                    output_dim = self._doubao_output_dim({})
                     response = self.client.multimodal_embeddings.create(
-                        model=self.model, input=[{"type": "text", "text": "test"}]
+                        model=self.model,
+                        input=[{"type": "text", "text": "test"}],
+                        dimensions=output_dim,
+                        encoding_format="float",
                     )
-                    if response.data and response.data.embedding:
-                        return True, "Embedding model validation successful"
-                    else:
-                        return False, "Embedding model returned empty response"
+                    self._extract_doubao_embedding(response, output_dim)
+                    return True, "Embedding model validation successful"
                 else:
                     response = self.client.embeddings.create(model=self.model, input=["test"])
                     if response.data and len(response.data) > 0 and response.data[0].embedding:

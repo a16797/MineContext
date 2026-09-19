@@ -179,6 +179,30 @@ class OpenContext:
             logger.error(f"Error during shutdown: {e}")
             if not graceful:
                 raise
+        finally:
+            # Close the optional Codex App Server runtime as well as regular
+            # API clients.  Do not call get_instance() here: during a partial
+            # startup it would create a fresh client solely to shut it down.
+            try:
+                vlm_client = getattr(GlobalVLMClient, "_instance", None)
+                if vlm_client is not None:
+                    close = getattr(vlm_client, "close", None)
+                    if callable(close):
+                        close()
+                        logger.info("VLM client shut down")
+            except Exception as e:
+                logger.warning(f"Error closing VLM client: {e}")
+            try:
+                # Login/model-list routes can start the shared App Server
+                # before subscription mode is selected, so it also needs an
+                # unconditional process-level shutdown hook.
+                from opencontext.llm.codex_subscription_runtime import (
+                    reset_codex_subscription_runtime,
+                )
+
+                reset_codex_subscription_runtime()
+            except Exception as e:
+                logger.warning(f"Error closing Codex subscription runtime: {e}")
 
     def add_context(self, context_data: RawContextProperties) -> bool:
         """

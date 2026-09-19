@@ -71,6 +71,7 @@ class LLMContextStrategy:
         response = await generate_for_agent_async(
             messages=messages,
             tools=self.all_tools,
+            purpose="chat",
             # thinking="disabled",
         )
 
@@ -161,6 +162,7 @@ class LLMContextStrategy:
             messages=messages,
             enable_executor=False,
             thinking="disabled",
+            purpose="chat",
         )
         # Parse sufficiency evaluation
         response_upper = response.upper()
@@ -400,6 +402,7 @@ class LLMContextStrategy:
             response = await generate_with_messages_async(
                 messages=messages,
                 thinking="disabled",
+                purpose="chat",
             )
 
             # Parse validation result

@@ -33,7 +33,32 @@ agent_instance = None
 
 # Interrupt flags for active streaming messages
 # Key: message_id, Value: True if interrupted
-active_streams = {}
+active_stream_workflows = {}
+
+
+class _ActiveStreamRegistry(dict):
+    """Keep the legacy boolean API while cancelling the owning workflow.
+
+    ``messages.py`` deliberately imports this mapping and sets a message's
+    value to ``True`` when the user presses Stop.  Intercept that assignment
+    so the workflow task and its model turn are cancelled immediately, while
+    retaining the existing mapping contract for older callers.
+    """
+
+    def __setitem__(self, message_id, interrupted):
+        super().__setitem__(message_id, interrupted)
+        if not interrupted:
+            return
+        workflow_id = active_stream_workflows.get(message_id)
+        if not workflow_id:
+            return
+        try:
+            get_agent().cancel(workflow_id)
+        except Exception as exc:
+            logger.warning("Failed to cancel workflow %s for message %s: %s", workflow_id, message_id, exc)
+
+
+active_streams = _ActiveStreamRegistry()
 
 
 def get_agent():
@@ -178,6 +203,10 @@ async def chat_stream(request: ChatRequest, _auth: str = auth_dependency):
             interrupted = False  # Track if stream was interrupted
 
             async for event in agent.process_stream(**args):
+                if assistant_message_id:
+                    workflow_id = event.metadata.get("workflow_id") if event.metadata else None
+                    if workflow_id:
+                        active_stream_workflows[assistant_message_id] = workflow_id
                 # Check interrupt flag (in-memory, no database query)
                 if assistant_message_id and active_streams.get(assistant_message_id):
                     logger.info(f"Message {assistant_message_id} was interrupted, stopping stream")
@@ -277,6 +306,7 @@ async def chat_stream(request: ChatRequest, _auth: str = auth_dependency):
             # Clean up the interrupt flag when stream ends
             if assistant_message_id and assistant_message_id in active_streams:
                 del active_streams[assistant_message_id]
+                active_stream_workflows.pop(assistant_message_id, None)
                 logger.debug(f"Cleaned up interrupt flag for message {assistant_message_id}")
 
     return StreamingResponse(

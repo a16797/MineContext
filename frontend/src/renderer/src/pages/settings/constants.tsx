@@ -9,11 +9,12 @@ import custom from '../../assets/images/settings/custom.svg'
 export enum ModelTypeList {
   Doubao = 'doubao',
   OpenAI = 'openai',
-  Custom = 'custom'
+  Custom = 'custom',
+  ChatGPTSubscription = 'chatgpt_subscription'
 }
 
 export enum embeddingModels {
-  DoubaoEmbeddingModelId = 'doubao-embedding-vision-250615',
+  DoubaoEmbeddingModelId = 'doubao-embedding-vision-251215',
   OpenAIEmbeddingModelId = 'text-embedding-3-large'
 }
 export enum BaseUrl {
@@ -74,5 +75,14 @@ export const ModelInfoList = [
     icon: <img src={custom} className="!max-w-none w-[18px] h-[18px]" />,
     key: 'Custom',
     value: 'custom'
+  },
+  {
+    icon: (
+      <div className="w-[24px] h-[24px] rounded-full bg-[#10a37f] text-white flex items-center justify-center font-bold text-[14px]">
+        C
+      </div>
+    ),
+    key: 'ChatGPT',
+    value: ModelTypeList.ChatGPTSubscription
   }
 ]

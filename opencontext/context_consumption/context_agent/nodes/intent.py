@@ -84,6 +84,7 @@ class IntentNode(BaseNode):
         response = await generate_with_messages_async(
             messages,
             thinking="disabled",
+            purpose="chat",
         )
         response = response.strip().lower()
         if "simple_chat" in response:
@@ -121,7 +122,7 @@ class IntentNode(BaseNode):
         # Use streaming generation
         full_content = ""
         chunk_index = 0
-        async for chunk in generate_stream_for_agent(messages):
+        async for chunk in generate_stream_for_agent(messages, purpose="chat"):
             if chunk.choices and len(chunk.choices) > 0:
                 delta = chunk.choices[0].delta
                 if hasattr(delta, "content") and delta.content:
@@ -183,6 +184,7 @@ class IntentNode(BaseNode):
         response = await generate_with_messages_async(
             messages,
             thinking="disabled",
+            purpose="chat",
         )
         response = response.strip().lower()
         state.intent = Intent(
@@ -236,7 +238,7 @@ class IntentNode(BaseNode):
             ]
 
             response = await generate_with_messages_async(
-                messages, thinking="disabled"
+                messages, thinking="disabled", purpose="chat"
             )
 
             result = parse_json_from_response(response.strip())

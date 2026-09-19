@@ -188,7 +188,7 @@ class ReflectionNode(BaseNode):
                 {"role": "user", "content": prompt},
             ]
 
-            response = await generate_with_messages_async(messages)
+            response = await generate_with_messages_async(messages, purpose="chat")
 
             if response and response.strip() != "None":
                 # Parse issues
@@ -240,7 +240,7 @@ class ReflectionNode(BaseNode):
                     {"role": "user", "content": prompt},
                 ]
 
-                response = await generate_with_messages_async(messages)
+                response = await generate_with_messages_async(messages, purpose="chat")
 
                 # Parse suggestions
                 for line in response.split("\n"):

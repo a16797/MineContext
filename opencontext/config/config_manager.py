@@ -194,6 +194,10 @@ class ConfigManager:
             # Update with new settings
             if "vlm_model" in settings:
                 user_settings["vlm_model"] = settings["vlm_model"]
+            if "background_model" in settings:
+                user_settings["background_model"] = settings["background_model"]
+            if "vision_model" in settings:
+                user_settings["vision_model"] = settings["vision_model"]
             if "embedding_model" in settings:
                 user_settings["embedding_model"] = settings["embedding_model"]
             if "content_generation" in settings:

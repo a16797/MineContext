@@ -141,7 +141,7 @@ class ExecutorNode(BaseNode):
         # Use streaming generation
         full_content = ""
         chunk_index = 0
-        async for chunk in generate_stream_for_agent(messages):
+        async for chunk in generate_stream_for_agent(messages, purpose="chat"):
             if chunk.choices and len(chunk.choices) > 0:
                 delta = chunk.choices[0].delta
                 if hasattr(delta, "content") and delta.content:
@@ -183,7 +183,7 @@ class ExecutorNode(BaseNode):
         # Use streaming generation
         full_content = ""
         chunk_index = 0
-        async for chunk in generate_stream_for_agent(messages):
+        async for chunk in generate_stream_for_agent(messages, purpose="chat"):
             if chunk.choices and len(chunk.choices) > 0:
                 delta = chunk.choices[0].delta
                 if hasattr(delta, "content") and delta.content:
@@ -255,7 +255,7 @@ class ExecutorNode(BaseNode):
         # Use streaming generation
         full_content = ""
         chunk_index = 0
-        async for chunk in generate_stream_for_agent(messages):
+        async for chunk in generate_stream_for_agent(messages, purpose="chat"):
             if chunk.choices and len(chunk.choices) > 0:
                 delta = chunk.choices[0].delta
                 if hasattr(delta, "content") and delta.content:

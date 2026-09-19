@@ -7,6 +7,7 @@ Core workflow control logic.
 """
 
 import asyncio
+import contextlib
 from datetime import datetime
 from typing import Any, AsyncIterator, Dict, Optional
 
@@ -33,6 +34,10 @@ class WorkflowEngine:
 
         # Node instances (lazy initialization)
         self._nodes = {}
+        # One task per active workflow.  Keeping the task here lets the HTTP
+        # cancel endpoint stop the actual background execution instead of
+        # merely setting a flag that is observed on a later event.
+        self._active_tasks: Dict[str, asyncio.Task] = {}
 
     def _init_nodes(self):
         """Initialize nodes."""
@@ -69,12 +74,17 @@ class WorkflowEngine:
             document_id=kwargs.get("document_id", None),
         )
         state = self.state_manager.create_state(query_obj=query_obj, **kwargs)
+        workflow_id = state.metadata.workflow_id
+        current_task = asyncio.current_task()
+        if current_task is not None:
+            self._active_tasks[workflow_id] = current_task
         try:
             await self.streaming_manager.emit(
                 StreamEvent(
                     type=EventType.RUNNING,
                     stage=state.stage,
                     content=f"Starting to process query: {state.query.text}...",
+                    metadata={"workflow_id": workflow_id},
                 )
             )
             state = await self._execute_workflow(state)
@@ -97,6 +107,22 @@ class WorkflowEngine:
                         progress=1.0,
                     )
                 )
+        except asyncio.CancelledError:
+            state.is_cancelled = True
+            state.update_stage(WorkflowStage.FAILED)
+            state.add_error("Workflow cancelled")
+            # Make the cancellation observable to the streaming consumer.  A
+            # cancelled task may still have a cancellation request pending,
+            # so do not let a second cancellation obscure cleanup.
+            with contextlib.suppress(Exception, asyncio.CancelledError):
+                await self.streaming_manager.emit(
+                    StreamEvent(
+                        type=EventType.FAIL,
+                        stage=state.stage,
+                        content="Workflow cancelled",
+                    )
+                )
+            return state
         except Exception as e:
             self.logger.exception(f"Workflow execution failed: {e}")
             state.update_stage(WorkflowStage.FAILED)
@@ -108,6 +134,9 @@ class WorkflowEngine:
                     content=f"Workflow execution failed: {str(e)}",
                 )
             )
+        finally:
+            if self._active_tasks.get(workflow_id) is current_task:
+                self._active_tasks.pop(workflow_id, None)
         return state
 
     async def execute_stream(self, **kwargs) -> AsyncIterator[StreamEvent]:
@@ -116,11 +145,22 @@ class WorkflowEngine:
         """
         # Start the workflow execution task
         task = asyncio.create_task(self.execute(streaming=True, **kwargs))
+        stream_completed = False
         try:
             async for event in self.streaming_manager.stream():
+                # Mark this before yielding.  If the consumer closes the
+                # generator immediately after receiving the terminal event,
+                # the successful workflow task must still be awaited rather
+                # than cancelled.
+                stream_completed = event.stage in [WorkflowStage.COMPLETED, WorkflowStage.FAILED]
                 yield event
         finally:
-            await task
+            # A disconnected client must not leave the model request and its
+            # tool execution running in the background.
+            if not stream_completed and not task.done():
+                task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
     async def _execute_workflow(self, state: WorkflowState) -> WorkflowState:
         """Execute the main workflow logic."""
@@ -205,3 +245,11 @@ class WorkflowEngine:
         if state:
             state.is_cancelled = True
             state.update_stage(WorkflowStage.FAILED)
+
+        task = self._active_tasks.get(workflow_id)
+        if task is not None and not task.done():
+            # Cancelling the owning task propagates into the subscription
+            # adapter, which interrupts the request-key-matched Codex turn.
+            # Do not also cancel a process-global "latest" turn: a screenshot
+            # analysis may be running concurrently and must remain untouched.
+            task.cancel()
