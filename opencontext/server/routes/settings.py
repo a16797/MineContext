@@ -390,7 +390,7 @@ async def update_model_settings(request: UpdateModelSettingsRequest, _auth: str 
                 try:
                     runtime = _get_subscription_runtime()
                     status = _subscription_status_payload(
-                        await _runtime_call_async(runtime, ("account_read",), refresh_token=False)
+                        await _runtime_call_async(runtime, ("account_read",), refresh_token=True)
                     )
                     authenticated = bool(status.get("authenticated", False))
                     if not authenticated:
@@ -549,7 +549,7 @@ async def validate_llm_config(request: UpdateModelSettingsRequest, _auth: str = 
             try:
                 runtime = _get_subscription_runtime()
                 status = _subscription_status_payload(
-                    await _runtime_call_async(runtime, ("account_read",), refresh_token=False)
+                    await _runtime_call_async(runtime, ("account_read",), refresh_token=True)
                 )
                 authenticated = bool(status.get("authenticated", False))
                 if authenticated:
@@ -647,11 +647,11 @@ async def cancel_subscription_login(
 
 @router.get("/api/model_settings/chatgpt/auth/status")
 @router.get("/api/model_settings/subscription/status")
-async def get_subscription_status(_auth: str = auth_dependency):
+async def get_subscription_status(refresh: bool = False, _auth: str = auth_dependency):
     """Return login status without exposing credentials or tokens."""
     try:
         runtime = _get_subscription_runtime()
-        result = await _runtime_call_async(runtime, ("account_read",), refresh_token=False)
+        result = await _runtime_call_async(runtime, ("account_read",), refresh_token=refresh)
         return convert_resp(data=_subscription_status_payload(result))
     except Exception as exc:
         logger.exception("Failed to get ChatGPT subscription status: %s", exc)

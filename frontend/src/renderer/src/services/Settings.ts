@@ -106,8 +106,8 @@ const normalizeAuthStatus = (value: any): ChatGPTAuthStatus | undefined => {
   }
 }
 
-export const getChatGPTAuthStatus = async (): Promise<ChatGPTAuthStatus | undefined> => {
-  const res = await axiosInstance.get(`${CHATGPT_SETTINGS_PREFIX}/auth/status`)
+export const getChatGPTAuthStatus = async (refresh = false): Promise<ChatGPTAuthStatus | undefined> => {
+  const res = await axiosInstance.get(`${CHATGPT_SETTINGS_PREFIX}/auth/status`, { params: { refresh } })
   return normalizeAuthStatus(getChatGPTData<ChatGPTAuthStatus>(res))
 }
 

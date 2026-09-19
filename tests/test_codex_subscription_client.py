@@ -10,12 +10,16 @@ from opencontext.llm.codex_subscription_runtime import CodexSubscriptionRuntime,
 
 
 class FakeRuntime:
-    def __init__(self, response_text, block=False):
+    def __init__(self, response_text, block=False, authenticated=True):
         self.response_text = response_text
         self.block = block
+        self.authenticated = authenticated
         self.requests = []
         self.interrupted = []
         self._subscribers = set()
+
+    def account_read(self, refresh_token=False):
+        return {"account": {"type": "chatgpt"} if self.authenticated else None}
 
     def request(self, method, params=None, timeout=None):
         self.requests.append((method, params))
@@ -105,6 +109,16 @@ def test_invalid_tool_name_fails_closed():
             [{"role": "user", "content": "run"}],
             tools=[{"type": "function", "function": {"name": "find", "parameters": {"type": "object"}}}],
         )
+
+
+def test_generation_stops_before_inference_when_subscription_is_logged_out():
+    runtime = FakeRuntime("unused", authenticated=False)
+    client = _client(runtime)
+
+    with pytest.raises(Exception, match="login is unavailable"):
+        client.generate_with_messages([{"role": "user", "content": "hello"}])
+
+    assert runtime.requests == []
 
 
 def test_invalid_nested_tool_arguments_fail_closed():
@@ -210,3 +224,21 @@ def test_relative_context_path_never_stores_auth_in_the_repository(monkeypatch, 
 
     assert home == tmp_path / "MineContext" / "codex-home"
     assert cwd == tmp_path / "MineContext" / "codex-workspace"
+
+
+def test_codex_login_path_is_stable_across_context_paths(monkeypatch, tmp_path):
+    monkeypatch.setenv("CONTEXT_PATH", str(tmp_path / "electron-user-data"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+
+    home, cwd = CodexSubscriptionRuntime({})._paths()
+
+    assert home == tmp_path / "MineContext" / "codex-home"
+    assert cwd == tmp_path / "MineContext" / "codex-workspace"
+
+
+def test_codex_runtime_uses_isolated_file_credentials(monkeypatch):
+    monkeypatch.setattr(CodexSubscriptionRuntime, "_find_cli", staticmethod(lambda explicit=None: "codex.exe"))
+
+    command = CodexSubscriptionRuntime({})._command()
+
+    assert 'cli_auth_credentials_store="file"' in command

@@ -62,7 +62,8 @@ const ScreenMonitor: React.FC = () => {
     selectedImage,
     setSelectedImage,
     getNewActivities,
-    getActivitiesByDate
+    getActivitiesByDate,
+    loadScreenshotsByDate
   } = useScreen()
   const [isMonitoring, setIsMonitoring] = useState(false)
   useMount(() => {
@@ -110,7 +111,7 @@ const ScreenMonitor: React.FC = () => {
   useEffect(() => {
     const initActivities = async () => {
       const date = dayjs(currentDate).startOf('day').toDate()
-      const todayActivities = await getActivitiesByDate(date)
+      const [todayActivities] = await Promise.all([getActivitiesByDate(date), loadScreenshotsByDate(date)])
       const todayActivitiesParsed: Activity[] = todayActivities.map((item: any) => ({
         ...item,
         resources: JSON.parse(item.resources)
@@ -128,7 +129,7 @@ const ScreenMonitor: React.FC = () => {
       }
     }
     initActivities()
-  }, [currentDate, getActivitiesByDate])
+  }, [currentDate, getActivitiesByDate, loadScreenshotsByDate])
 
   // Manage polling when date or monitoring status changes
   useEffect(() => {

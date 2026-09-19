@@ -70,7 +70,9 @@ export class DB {
       // It is recommended to place the database file in a fixed location, such as the data folder in the project root directory
       const dbPath =
         dbPath1 ||
-        path.join(!app.isPackaged && is.dev ? 'backend' : app.getPath('userData'), 'persist', 'sqlite', dbName)
+        (!app.isPackaged && is.dev
+          ? path.resolve(process.cwd(), '..', 'persist', 'sqlite', dbName)
+          : path.join(app.getPath('userData'), 'persist', 'sqlite', dbName))
       this.instance = new DB(dbPath)
     }
     return this.instance

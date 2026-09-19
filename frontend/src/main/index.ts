@@ -258,12 +258,6 @@ app.whenReady().then(() => {
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
 
-    // Automatically open DevTools in development environment
-
-    if (isDev) {
-      window.webContents.openDevTools()
-      console.log('DevTools opened automatically in development mode')
-    }
   })
 
   const mainWindow = createWindow()

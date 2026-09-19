@@ -207,6 +207,7 @@ interface SubscriptionFormItemsProps {
   prefix: string
   form: FormInstance
   authStatus?: ChatGPTAuthStatus
+  authError?: boolean
   authLoading: boolean
   models: ChatGPTModelInfo[]
   modelsLoading: boolean
@@ -223,6 +224,7 @@ const SubscriptionFormItems: FC<SubscriptionFormItemsProps> = (props) => {
     prefix,
     form,
     authStatus,
+    authError,
     authLoading,
     models,
     modelsLoading,
@@ -268,16 +270,21 @@ const SubscriptionFormItems: FC<SubscriptionFormItemsProps> = (props) => {
   const textOptions = modelOptions('text')
   const visionOptions = modelOptions('image')
   const authenticated = !!authStatus?.authenticated
+  const statusUnavailable = !!authError
 
   return (
     <div className="flex flex-col gap-6 mb-6">
       <div className="flex flex-col gap-[8px]">
         <span className="text-[#0B0B0F] font-roboto text-base font-normal leading-[22px]">ChatGPT subscription</span>
         <div className="flex items-center gap-2 text-[14px] text-[#6E718C]">
-          <Tag color={authenticated ? 'green' : 'gray'}>{authenticated ? 'Connected' : 'Not connected'}</Tag>
+          <Tag color={authenticated ? 'green' : 'gray'}>
+            {authenticated ? 'Connected' : statusUnavailable ? 'Status unavailable' : 'Not connected'}
+          </Tag>
           <span>
             {authenticated
               ? authStatus?.email || authStatus?.planType || 'ChatGPT account connected'
+              : statusUnavailable
+                ? 'Could not read the saved login. Refresh the status to try again.'
               : 'Sign in with the official Codex login to use your ChatGPT subscription.'}
           </span>
         </div>
@@ -286,7 +293,7 @@ const SubscriptionFormItems: FC<SubscriptionFormItemsProps> = (props) => {
             <Button type="outline" onClick={onLogout} loading={loginLoading}>
               Sign out
             </Button>
-          ) : (
+          ) : statusUnavailable ? null : (
             <Button type="primary" onClick={onLogin} loading={loginLoading}>
               Sign in with ChatGPT
             </Button>
@@ -472,7 +479,8 @@ const Settings: FC<SettingsProps> = (props) => {
     run: refreshSubscriptionStatus,
     runAsync: refreshSubscriptionStatusAsync,
     data: subscriptionStatus,
-    loading: subscriptionStatusLoading
+    loading: subscriptionStatusLoading,
+    error: subscriptionStatusError
   } = useRequest(getChatGPTAuthStatus, {
     manual: true,
     onError(error: Error) {
@@ -810,6 +818,7 @@ const Settings: FC<SettingsProps> = (props) => {
                         prefix={ModelTypeList.ChatGPTSubscription}
                         form={form as unknown as FormInstance}
                         authStatus={subscriptionStatus}
+                        authError={!!subscriptionStatusError}
                         authLoading={subscriptionStatusLoading}
                         models={subscriptionModels}
                         modelsLoading={subscriptionModelsLoading}
@@ -819,7 +828,7 @@ const Settings: FC<SettingsProps> = (props) => {
                         onCancelLogin={() => cancelLogin(subscriptionLoginId)}
                         onLogout={logout}
                         onRefresh={() => {
-                          refreshSubscriptionStatus()
+                          refreshSubscriptionStatus(true)
                           if (subscriptionStatus?.authenticated) refreshSubscriptionModels()
                         }}
                       />

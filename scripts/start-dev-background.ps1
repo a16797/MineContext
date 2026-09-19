@@ -90,6 +90,7 @@ if (-not $frontendProcess) {
   }
 }
 
-Write-Output "MineContext backend: healthy on 127.0.0.1:1733"
+$frontendProcess = Get-FrontendProcess
+Write-Output 'MineContext backend: healthy on 127.0.0.1:1733'
 Write-Output "MineContext frontend: running (PID $($frontendProcess.ProcessId))"
-Write-Output 'Closing the main window now hides it to the system tray; use the tray Quit command to stop it.'
+Write-Output 'Closing the main window hides it to the system tray; use the tray Quit command to stop it.'

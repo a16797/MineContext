@@ -21,6 +21,7 @@ import Settings from './pages/settings/settings'
 import { ServiceProvider, useObservableTask } from './atom/event-loop.atom'
 import { getLogger } from '@shared/logger/renderer'
 import { useMemoizedFn } from 'ahooks'
+import axiosInstance from '@renderer/services/axiosConfig'
 
 const logger = getLogger('App.tsx')
 const isEnglish = true // Hardcode for now, will change later
@@ -32,7 +33,8 @@ interface BackendStatusInfo {
 
 function AppContent(): React.ReactElement {
   const [backendStatus, setBackendStatus] = useState<BackendStatus>('starting')
-  const [showSetting, setShowSettings] = useState<boolean>(true)
+  const [showSetting, setShowSettings] = useState<boolean>(false)
+  const [setupChecked, setSetupChecked] = useState<boolean>(false)
 
   const checkInitialStatus = useMemoizedFn(async () => {
     try {
@@ -97,8 +99,40 @@ function AppContent(): React.ReactElement {
       const temp = JSON.parse(data)
       logger.info('Init settings data:', temp)
       setShowSettings(!temp.data.components.llm)
+      setSetupChecked(true)
     })
   }, [])
+
+  useEffect(() => {
+    if (backendStatus !== 'running') return
+
+    let cancelled = false
+    const loadSetupStatus = async () => {
+      for (let attempt = 0; attempt < 3 && !cancelled; attempt++) {
+        try {
+          const response = await axiosInstance.get('/api/health')
+          if (!cancelled) {
+            setShowSettings(!response.data.data.components.llm)
+            setSetupChecked(true)
+          }
+          return
+        } catch (error) {
+          logger.error('Failed to load setup status:', { error, attempt: attempt + 1 })
+          if (attempt < 2) {
+            await new Promise((resolve) => window.setTimeout(resolve, 1000))
+          }
+        }
+      }
+      if (!cancelled) {
+        setBackendStatus('error')
+      }
+    }
+
+    loadSetupStatus()
+    return () => {
+      cancelled = true
+    }
+  }, [backendStatus])
 
   // Decide whether to display the application based on the status
   const pythonServerStarted = backendStatus === 'running'
@@ -107,7 +141,7 @@ function AppContent(): React.ReactElement {
   })
   return (
     <>
-      {pythonServerStarted ? (
+      {pythonServerStarted && setupChecked ? (
         <CaptureSourcesProvider>
           {showSetting ? <Settings closeSetting={closeSetting} init /> : <Router />}
         </CaptureSourcesProvider>

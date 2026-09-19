@@ -187,6 +187,14 @@ class CodexSubscriptionClient:
         return "\n\n".join(system_parts), history, current
 
     def _new_thread(self, developer_instructions: str, tools: Optional[list[Mapping[str, Any]]] = None) -> str:
+        account_read = getattr(self.runtime, "account_read", None)
+        if callable(account_read):
+            account_status = account_read(refresh_token=False)
+            account = account_status.get("account") if isinstance(account_status, Mapping) else None
+            if not isinstance(account, Mapping):
+                raise CodexSubscriptionError(
+                    "ChatGPT subscription login is unavailable. Refresh the login status in Settings."
+                )
         params: Dict[str, Any] = {
             "ephemeral": True,
             "model": self.model,

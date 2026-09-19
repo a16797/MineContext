@@ -19,6 +19,12 @@ class ScreenshotService extends CaptureSourcesTools {
     logger.info('ScreenshotService initialized')
   }
 
+  private getActivityPath(): string {
+    return !app.isPackaged && isDev
+      ? path.resolve(process.cwd(), 'backend', 'screenshot', 'activity')
+      : path.join(app.getPath('userData'), 'Data', 'screenshot', 'activity')
+  }
+
   /**
    * Check for screen recording permissions.
    * On macOS, it checks if the app has been granted screen recording permissions.
@@ -70,14 +76,11 @@ class ScreenshotService extends CaptureSourcesTools {
           return { success: false, error: 'Empty thumbnail buffer' }
         }
         const timestamp = batchTime || dayjs()
-        const userDataPath = app.getPath('userData')
         const time = timestamp.format('YYYY-MM-DD')
         const currentTime = timestamp.format('HH-mm-ss')
         // const timestamp = dayjs().valueOf()
         const appName = get(source, 'sourceName', sourceId.split(':').join('-'))
-        const activityPath = !isDev
-          ? path.join(userDataPath, 'Data', 'screenshot', 'activity', time, currentTime)
-          : path.join(process.cwd(), 'backend', 'screenshot', 'activity', time, currentTime)
+        const activityPath = path.join(this.getActivityPath(), time, currentTime)
         console.log(activityPath)
         await fs.promises.mkdir(activityPath, { recursive: true })
         const filePath = path.join(
@@ -118,9 +121,11 @@ class ScreenshotService extends CaptureSourcesTools {
    */
   async getScreenshotsByDate(date?: string): Promise<{ success: boolean; screenshots?: any[]; error?: string }> {
     try {
-      const userDataPath = app.getPath('userData')
-      const dateString = date || dayjs().format('YYYYMMDD')
-      const activityPath = path.join(userDataPath, 'Data', 'screenshot', 'activity', dateString)
+      const requestedDate = date || dayjs().format('YYYY-MM-DD')
+      const dateString = /^\d{8}$/.test(requestedDate)
+        ? `${requestedDate.slice(0, 4)}-${requestedDate.slice(4, 6)}-${requestedDate.slice(6, 8)}`
+        : requestedDate
+      const activityPath = path.join(this.getActivityPath(), dateString)
 
       // Check if the directory exists
       if (!fs.existsSync(activityPath)) {
@@ -154,10 +159,12 @@ class ScreenshotService extends CaptureSourcesTools {
             if (path.extname(file).toLowerCase() === '.png') {
               const filePath = path.join(groupPath, file)
               const stats = await fs.promises.stat(filePath)
-              const timestamp = parseInt(path.basename(file, '.png'))
+              const groupTime = groupIntervalTime.replace(/-/g, ':')
+              const capturedAt = dayjs(`${dateString}T${groupTime}`)
+              const timestamp = capturedAt.isValid() ? capturedAt.valueOf() : stats.birthtimeMs
 
               screenshots.push({
-                id: `screenshot-${timestamp}`,
+                id: `screenshot-${groupIntervalTime}-${file}`,
                 date: dateString,
                 timestamp: timestamp,
                 image_url: filePath,
@@ -278,8 +285,7 @@ class ScreenshotService extends CaptureSourcesTools {
     retentionDays: number = 15
   ): Promise<{ success: boolean; deletedCount?: number; deletedSize?: number; error?: string }> {
     try {
-      const userDataPath = app.getPath('userData')
-      const screenshotBasePath = path.join(userDataPath, 'Data', 'screenshot', 'activity')
+      const screenshotBasePath = this.getActivityPath()
 
       // Check if directory exists
       if (!fs.existsSync(screenshotBasePath)) {

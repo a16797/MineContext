@@ -109,16 +109,9 @@ class CodexSubscriptionRuntime:
         return list(self._stderr)
 
     def _paths(self) -> tuple[Path, Path]:
-        context_root = os.environ.get("CONTEXT_PATH")
-        # Packaged MineContext supplies an absolute userData path.  Development
-        # uses CONTEXT_PATH="."; never place Codex auth state in the Git tree.
-        if context_root and Path(context_root).is_absolute():
-            local_app = Path(context_root)
-        else:
-            local_app = (
-                Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir()))
-                / "MineContext"
-            )
+        # Development and packaged Electron use different CONTEXT_PATH values,
+        # but this local app must keep one official Codex login for the user.
+        local_app = Path(os.environ.get("LOCALAPPDATA", tempfile.gettempdir())) / "MineContext"
         home = Path(self.config.get("codex_home") or local_app / "codex-home").expanduser()
         cwd = Path(self.config.get("cwd") or local_app / "codex-workspace").expanduser()
         home.mkdir(parents=True, exist_ok=True)
@@ -165,6 +158,10 @@ class CodexSubscriptionRuntime:
             args.extend(["--disable", str(feature)])
         args.extend(["-c", "tools.web_search=false"])
         args.extend(["-c", "project_doc_max_bytes=0"])
+        # This app owns an isolated CODEX_HOME.  Keep its official ChatGPT
+        # login in that directory instead of depending on the process user's
+        # platform credential-store selection.
+        args.extend(["-c", 'cli_auth_credentials_store="file"'])
         if self.config.get("force_chatgpt_login", True):
             args.extend(["-c", 'forced_login_method="chatgpt"'])
         args.extend(list(self.config.get("extra_args", [])))

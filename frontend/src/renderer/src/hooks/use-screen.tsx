@@ -12,6 +12,7 @@ import {
   setIsMonitoring as setIsMonitoringAction,
   setCurrentSession as setCurrentSessionAction,
   removeScreenshot as removeScreenshotAction,
+  initializeSessionWithScreenshots,
   MonitorSession,
   ScreenshotRecord
 } from '@renderer/store/screen'
@@ -125,6 +126,21 @@ export const useScreen = () => {
     }
   })
 
+  const loadScreenshotsByDate = useMemoizedFn(async (date: Date) => {
+    const dateString = dayjs(date).format('YYYY-MM-DD')
+    const result = await window.screenMonitorAPI.getScreenshotsByDate(dateString)
+    if (!result.success) {
+      Message.error(result.error || 'Failed to load screenshot history')
+      return
+    }
+    dispatch(
+      initializeSessionWithScreenshots({
+        date: dateString,
+        screenshots: result.screenshots || []
+      })
+    )
+  })
+
   // Load and display image
   const loadAndShowImage = useMemoizedFn(async (screenshot: ScreenshotRecord) => {
     if (screenshot.base64_url) {
@@ -213,6 +229,7 @@ export const useScreen = () => {
     loadAndShowImage,
     downloadScreenshot,
     getNewActivities,
-    getActivitiesByDate
+    getActivitiesByDate,
+    loadScreenshotsByDate
   }
 }

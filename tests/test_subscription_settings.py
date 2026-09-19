@@ -1,6 +1,8 @@
 import asyncio
+import json
 
 import pytest
+import opencontext.server.routes.settings as settings_routes
 
 from opencontext.server.routes.settings import (
     ModelSettingsVO,
@@ -66,6 +68,23 @@ def test_account_status_does_not_expose_tokens():
         "planType": "pro",
         "type": "chatgpt",
     }
+
+
+def test_subscription_status_refresh_is_explicit(monkeypatch):
+    seen = {}
+
+    async def fake_runtime_call(runtime, names, **kwargs):
+        seen.update(kwargs)
+        return {"account": {"type": "chatgpt", "planType": "pro"}}
+
+    monkeypatch.setattr(settings_routes, "_get_subscription_runtime", lambda: object())
+    monkeypatch.setattr(settings_routes, "_runtime_call_async", fake_runtime_call)
+
+    response = asyncio.run(settings_routes.get_subscription_status(refresh=True, _auth=""))
+    payload = json.loads(response.body)
+
+    assert seen["refresh_token"] is True
+    assert payload["data"]["authenticated"] is True
 
 
 def test_model_filter_and_save_validation_require_image_input():

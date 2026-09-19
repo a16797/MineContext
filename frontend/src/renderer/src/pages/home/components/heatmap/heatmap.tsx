@@ -75,8 +75,12 @@ export interface HeatmapEntryProps {
 }
 const HeatmapEntry: FC<HeatmapEntryProps> = (props) => {
   const { onChange } = props
+  const currentYear = dayjs().year()
   const { data, loading } = useRequest(async () => {
-    const res = await window.dbAPI.getHeatmapData(dayjs('2025-01-01').valueOf(), dayjs('2025-12-31').valueOf())
+    const res = await window.dbAPI.getHeatmapData(
+      dayjs(`${currentYear}-01-01`).startOf('day').valueOf(),
+      dayjs(`${currentYear}-12-31`).endOf('day').valueOf()
+    )
 
     const dataList = res.reduce(
       (acc, cur) => {
@@ -103,12 +107,7 @@ const HeatmapEntry: FC<HeatmapEntryProps> = (props) => {
 
     return dataList
   })
-  const yearList = useMemo(() => {
-    const currentYear = dayjs().year() // 当前年份
-    const targetYear = 2025
-    const diff = targetYear - currentYear
-    return Array.from({ length: diff + 1 }, (_, i) => currentYear + i)
-  }, [])
+  const yearList = useMemo(() => [currentYear], [currentYear])
   const [selectedYear, setSelectedYear] = useState(yearList[0])
   const [selectedDays, setSelectedDays] = useState<string | null>(null)
   const [currentMode, setCurrentMode] = useState<MonthType>(MonthType.YEAR)
@@ -136,7 +135,7 @@ const HeatmapEntry: FC<HeatmapEntryProps> = (props) => {
   })
   const handleSubtract = useMemoizedFn(() => {
     const days = dayjs(selectedDays).subtract(1, 'day').format('YYYY-MM-DD')
-    if (dayjs(days).isSameOrAfter(dayjs('2025-01-01'))) {
+    if (dayjs(days).isSameOrAfter(dayjs().startOf('year'))) {
       setSelectedDays(days)
     } else {
       Message.info('Cannot select past date')
