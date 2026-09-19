@@ -5,7 +5,7 @@ import { POWER_MONITOR_KEY } from '@shared/constant/power-monitor'
 import { IpcServerPushChannel } from '@shared/ipc-server-push-channel'
 import { getLogger } from '@shared/logger/main'
 import { monitor } from '@shared/logger/performance'
-import { app, BrowserWindow, powerMonitor, powerSaveBlocker } from 'electron'
+import { BrowserWindow, powerMonitor, powerSaveBlocker } from 'electron'
 const logger = getLogger('Power')
 class Power {
   private blockerId?: number
@@ -27,12 +27,6 @@ class Power {
   }
   run() {
     this.blockerId = powerSaveBlocker.start('prevent-app-suspension')
-    app.on('window-all-closed', () => {
-      if (this.blockerId && powerSaveBlocker.isStarted(this.blockerId)) {
-        powerSaveBlocker.stop(this.blockerId)
-        logger.info('🛑 powerSaveBlocker stopped')
-      }
-    })
 
     // Listen for macOS power events
     powerMonitor.on('suspend', () => {

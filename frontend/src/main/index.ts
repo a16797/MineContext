@@ -311,10 +311,8 @@ app.whenReady().then(() => {
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
 app.on('window-all-closed', () => {
-  monitor.stop()
   // Don't quit the app when windows are closed - keep running in tray
   // App will only quit when user clicks "Quit" from tray menu
-  task.unregister()
   logger.info('All windows closed, app continues running in tray')
 })
 
@@ -337,6 +335,11 @@ if (!isDev) {
 app.on('before-quit', () => {
   // Set flag to allow windows to actually close
   ;(app as any).isQuitting = true
+
+  // Background work must survive a hidden/closed window and stop only on a real app exit.
+  monitor.stop()
+  task.unregister()
+  powerWatcher.unregister()
 
   // Restore the original console.log to avoid "Object has been destroyed" errors during exit
   console.log = originalConsoleLog
