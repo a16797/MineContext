@@ -112,12 +112,13 @@ class IntentNode(BaseNode):
         user_prompt = prompt_template["user"].format(query=state.query.text)
         messages = [
             {"role": "system", "content": prompt_template["system"]},
-            {"role": "user", "content": user_prompt},
         ]
         if state.contexts.chat_history:
             recent_messages = state.contexts.chat_history[-10:]  # Last 10 messages
             for msg in recent_messages:
-                messages.insert(1, {"role": msg.role, "content": msg.content})
+                messages.append({"role": msg.role, "content": msg.content})
+        # The current query is submitted exactly once, after prior history.
+        messages.append({"role": "user", "content": user_prompt})
 
         # Use streaming generation
         full_content = ""
@@ -164,7 +165,7 @@ class IntentNode(BaseNode):
         if state.contexts.chat_history:
             recent_messages = state.contexts.chat_history[-10:]  # Last 10 messages
             for msg in recent_messages:
-                chat_history.insert(1, {"role": msg.role, "content": msg.content})
+                chat_history.append({"role": msg.role, "content": msg.content})
 
         current_time = datetime.now()
         user_prompt = prompt_template["user"].format(

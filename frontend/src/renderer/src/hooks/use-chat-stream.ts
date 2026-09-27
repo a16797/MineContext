@@ -42,6 +42,9 @@ export const useChatStream = () => {
 
   const [streamingMessage, setStreamingMessage] = useState<StreamingMessage | null>(null)
   const currentStreamingId = useRef<string | null>(null)
+  const inFlightRef = useRef(false)
+  const streamingContentRef = useRef('')
+  const finalizedRef = useRef(false)
 
   // Cleanup function
   useEffect(() => {
@@ -53,7 +56,11 @@ export const useChatStream = () => {
   // Send message
   const sendMessage = useCallback(
     async (query: string, conversation_id: number, context?: ChatStreamRequest['context']) => {
-      if (!query.trim() || chatState.isLoading) return
+      if (!query.trim() || inFlightRef.current) return
+
+      // Set this synchronously before React schedules its state update.  This
+      // closes the double-click and repeated-Enter race window.
+      inFlightRef.current = true
 
       // Add user message
       const userMessage: ChatMessage = {
@@ -71,13 +78,17 @@ export const useChatStream = () => {
       // Clear previous streaming message
       setStreamingMessage(null)
       currentStreamingId.current = null
+      streamingContentRef.current = ''
+      finalizedRef.current = false
 
       const request: ChatStreamRequest = {
         query: query.trim(),
         conversation_id,
         context: {
           ...context,
-          chat_history: [...chatState.messages, userMessage]
+          // The current query is sent in `query`; history contains only
+          // already completed messages.
+          chat_history: chatState.messages
         },
         session_id: chatState.sessionId
       }
@@ -86,13 +97,35 @@ export const useChatStream = () => {
         await chatStreamService.sendStreamMessage(request, handleStreamEvent, handleStreamError, handleStreamComplete)
       } catch (error) {
         handleStreamError(error as Error)
+      } finally {
+        inFlightRef.current = false
       }
     },
     [chatState.messages, chatState.isLoading, chatState.sessionId]
   )
 
+  const finalizeStreamingContent = useCallback((failure?: string) => {
+    if (finalizedRef.current) return
+    finalizedRef.current = true
+
+    const content = streamingContentRef.current
+    streamingContentRef.current = ''
+    currentStreamingId.current = null
+    setStreamingMessage(null)
+
+    setChatState((prev) => ({
+      ...prev,
+      messages: content.trim() ? [...prev.messages, { role: 'assistant', content }] : prev.messages,
+      isLoading: false,
+      currentStage: failure ? 'failed' : 'completed',
+      progress: failure ? prev.progress : 1.0,
+      ...(failure ? { error: failure } : {})
+    }))
+  }, [])
+
   // Handle stream events
   const handleStreamEvent = useCallback((event: StreamEvent) => {
+    if (finalizedRef.current) return
     console.log('🎯 Handling stream event:', event.type, event)
 
     switch (event.type) {
@@ -142,6 +175,7 @@ export const useChatStream = () => {
         break
 
       case 'stream_chunk':
+        streamingContentRef.current += event.content
         if (!currentStreamingId.current) {
           currentStreamingId.current = 'stream_' + Date.now()
           setStreamingMessage({
@@ -169,71 +203,21 @@ export const useChatStream = () => {
         break
 
       case 'stream_complete':
-        setStreamingMessage((prev) => {
-          if (prev && prev.content.trim()) {
-            const finalMessage: ChatMessage = {
-              role: 'assistant',
-              content: prev.content
-            }
-
-            setChatState((chatState) => ({
-              ...chatState,
-              messages: [...chatState.messages, finalMessage],
-              isLoading: false,
-              currentStage: 'completed',
-              progress: 1.0
-            }))
-
-            currentStreamingId.current = null
-            return null
-          }
-          // No streaming message - just update state
-          setChatState((chatState) => ({
-            ...chatState,
-            isLoading: false,
-            currentStage: 'completed',
-            progress: 1.0
-          }))
-          return null
-        })
+        finalizeStreamingContent()
         break
 
       case 'completed':
         // Completed (non-streaming mode) - use content from event directly
-        if (event.content && event.content.trim()) {
-          const finalMessage: ChatMessage = {
-            role: 'assistant',
-            content: event.content
-          }
-
-          setChatState((prev) => ({
-            ...prev,
-            messages: [...prev.messages, finalMessage],
-            isLoading: false,
-            currentStage: 'completed',
-            progress: 1.0
-          }))
-        } else {
-          // Just update state if no content
-          setChatState((prev) => ({
-            ...prev,
-            isLoading: false,
-            currentStage: 'completed',
-            progress: 1.0
-          }))
+        if (event.content && !streamingContentRef.current) {
+          streamingContentRef.current = event.content
         }
-        setStreamingMessage(null)
-        currentStreamingId.current = null
+        finalizeStreamingContent()
         break
 
       case 'fail':
-        setChatState((prev) => ({
-          ...prev,
-          error: event.content,
-          isLoading: false,
-          currentStage: 'failed'
-        }))
-        setStreamingMessage(null)
+      case 'error':
+      case 'interrupted':
+        finalizeStreamingContent(event.content || '回答失败')
         break
 
       case 'done':
@@ -244,7 +228,7 @@ export const useChatStream = () => {
         }))
         break
     }
-  }, [])
+  }, [finalizeStreamingContent])
 
   // Handle stream error
   const handleStreamError = useCallback((error: Error) => {
@@ -257,14 +241,8 @@ export const useChatStream = () => {
       errorMessage = 'Request has been cancelled'
     }
 
-    setChatState((prev) => ({
-      ...prev,
-      error: errorMessage,
-      isLoading: false
-    }))
-    setStreamingMessage(null)
-    currentStreamingId.current = null
-  }, [])
+    finalizeStreamingContent(errorMessage)
+  }, [finalizeStreamingContent])
 
   // Handle stream completion
   const handleStreamComplete = useCallback(() => {
@@ -278,6 +256,7 @@ export const useChatStream = () => {
   // Clear chat history
   const clearChat = useCallback(() => {
     chatStreamService.abortStream()
+    inFlightRef.current = false
     setChatState({
       messages: [],
       isLoading: false,
@@ -287,17 +266,17 @@ export const useChatStream = () => {
     })
     setStreamingMessage(null)
     currentStreamingId.current = null
+    streamingContentRef.current = ''
+    finalizedRef.current = false
   }, [])
 
   // Stop the current streaming request
   const stopStreaming = useCallback(() => {
+    // Keep text already received visible and save it as an assistant message
+    // before closing the network stream.
+    finalizeStreamingContent('回答已停止')
     chatStreamService.abortStream()
-    setChatState((prev) => ({
-      ...prev,
-      isLoading: false
-    }))
-    setStreamingMessage(null)
-  }, [])
+  }, [finalizeStreamingContent])
 
   return {
     ...chatState,

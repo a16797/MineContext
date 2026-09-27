@@ -9,6 +9,7 @@ Agent Chat Routes
 Intelligent conversation routing based on Context Agent
 """
 
+import asyncio
 import json
 import uuid
 from typing import Any, Dict, Optional
@@ -28,11 +29,16 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/api/agent", tags=["agent_chat"])
 
-# Global Context Agent instance
+# Global Context Agent instance for non-streaming and administrative calls.
 agent_instance = None
 
-# Interrupt flags for active streaming messages
-# Key: message_id, Value: True if interrupted
+# The chat UI is deliberately single-flight.  A streaming request owns its
+# agent and queue until it finishes; a second request gets an immediate SSE
+# error instead of waiting or sharing the first request's events.
+chat_stream_lock = asyncio.Lock()
+
+# Interrupt flags for active streaming messages.
+# Key: message_id, Value: True if interrupted.
 active_stream_workflows = {}
 
 
@@ -49,13 +55,21 @@ class _ActiveStreamRegistry(dict):
         super().__setitem__(message_id, interrupted)
         if not interrupted:
             return
-        workflow_id = active_stream_workflows.get(message_id)
-        if not workflow_id:
+        owner = active_stream_workflows.get(message_id)
+        if not owner:
             return
         try:
-            get_agent().cancel(workflow_id)
+            owner_agent, workflow_id = owner
+            owner_agent.cancel(workflow_id)
+        except (TypeError, ValueError):
+            # Keep compatibility with older callers that registered only a
+            # workflow id while the request is being initialized.
+            try:
+                get_agent().cancel(owner)
+            except Exception as exc:
+                logger.warning("Failed to cancel workflow for message %s: %s", message_id, exc)
         except Exception as exc:
-            logger.warning("Failed to cancel workflow %s for message %s: %s", workflow_id, message_id, exc)
+            logger.warning("Failed to cancel workflow for message %s: %s", message_id, exc)
 
 
 active_streams = _ActiveStreamRegistry()
@@ -144,13 +158,34 @@ async def chat(request: ChatRequest, _auth: str = auth_dependency) -> ChatRespon
 async def chat_stream(request: ChatRequest, _auth: str = auth_dependency):
     """Intelligent chat interface (streaming)"""
 
+    async def busy_stream():
+        yield f"data: {json.dumps({'type': 'error', 'content': '上一条回答尚未结束，请等待完成后再发送。'}, ensure_ascii=False)}\n\n"
+
+    if chat_stream_lock.locked():
+        return StreamingResponse(
+            busy_stream(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    # The lock is acquired before returning the response so two requests
+    # cannot both pass the check above.  The streaming generator releases it
+    # after all request-owned state has been cleaned up.
+    await chat_stream_lock.acquire()
+
     async def generate():
         user_message_id = None
         assistant_message_id = None
         storage = None
 
         try:
-            agent = get_agent()
+            # Every stream gets a fresh workflow engine and StreamingManager.
+            # This prevents events from one request being consumed by another.
+            agent = ContextAgent(enable_streaming=True)
             storage = get_storage()
 
             if not request.session_id:
@@ -206,7 +241,7 @@ async def chat_stream(request: ChatRequest, _auth: str = auth_dependency):
                 if assistant_message_id:
                     workflow_id = event.metadata.get("workflow_id") if event.metadata else None
                     if workflow_id:
-                        active_stream_workflows[assistant_message_id] = workflow_id
+                        active_stream_workflows[assistant_message_id] = (agent, workflow_id)
                 # Check interrupt flag (in-memory, no database query)
                 if assistant_message_id and active_streams.get(assistant_message_id):
                     logger.info(f"Message {assistant_message_id} was interrupted, stopping stream")
@@ -286,6 +321,21 @@ async def chat_stream(request: ChatRequest, _auth: str = auth_dependency):
                 # Mark message as cancelled (status already set by interrupt endpoint)
                 logger.info(f"Message {assistant_message_id} interrupted with {len(accumulated_content)} characters saved")
 
+        except asyncio.CancelledError:
+            # A disconnected client must not leave a streaming DB row behind.
+            # The explicit Stop endpoint already marks it cancelled; otherwise
+            # mark it failed so it cannot remain pending forever.
+            if assistant_message_id and storage:
+                try:
+                    status = "cancelled" if active_streams.get(assistant_message_id) else "failed"
+                    storage.mark_message_finished(
+                        message_id=assistant_message_id,
+                        status=status,
+                        error_message="客户端连接已断开" if status == "failed" else None,
+                    )
+                except Exception as mark_error:
+                    logger.exception(f"Failed to finalize disconnected message: {mark_error}")
+            raise
         except Exception as e:
             logger.exception(f"Stream chat failed: {e}")
 
@@ -308,6 +358,8 @@ async def chat_stream(request: ChatRequest, _auth: str = auth_dependency):
                 del active_streams[assistant_message_id]
                 active_stream_workflows.pop(assistant_message_id, None)
                 logger.debug(f"Cleaned up interrupt flag for message {assistant_message_id}")
+            if chat_stream_lock.locked():
+                chat_stream_lock.release()
 
     return StreamingResponse(
         generate(),

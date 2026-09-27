@@ -13,9 +13,10 @@ export interface AIAssistantHeaderProps {
   conversationId: number
   handleGetMessages?: (conversationId: number) => void
   pageName: string
+  isLoading: boolean
 }
 const AIAssistantHeader: FC<AIAssistantHeaderProps> = (props) => {
-  const { onClose, startNewConversation, handleGetMessages, pageName } = props
+  const { onClose, startNewConversation, handleGetMessages, pageName, isLoading } = props
   const {
     runAsync: getConversationList,
     data: conversationList,
@@ -33,7 +34,7 @@ const AIAssistantHeader: FC<AIAssistantHeaderProps> = (props) => {
     { manual: true }
   )
   const handleVisibleChange = useMemoizedFn((visible: boolean) => {
-    if (visible) {
+    if (visible && !isLoading) {
       getConversationList()
     }
   })
@@ -41,6 +42,7 @@ const AIAssistantHeader: FC<AIAssistantHeaderProps> = (props) => {
   const showChatHistoryPopup = useMemoizedFn((e: MouseEvent) => {
     e?.stopPropagation()
     e?.preventDefault()
+    if (isLoading) return
     setPopupVisible(true)
   })
   const hideChatHistoryPopup = useMemoizedFn((e?: MouseEvent) => {
@@ -49,6 +51,7 @@ const AIAssistantHeader: FC<AIAssistantHeaderProps> = (props) => {
     setPopupVisible(false)
   })
   const selectConversation = useMemoizedFn((e: MouseEvent, conversationId: number) => {
+    if (isLoading) return
     hideChatHistoryPopup(e)
     handleGetMessages?.(conversationId)
   })
@@ -56,8 +59,9 @@ const AIAssistantHeader: FC<AIAssistantHeaderProps> = (props) => {
     <div className="flex items-center justify-between px-[16px] border-b border-[#F0F2FA]">
       <div
         className="flex items-center font-medium text-[#5252FF] cursor-pointer"
-        onClick={startNewConversation}
-        style={{ padding: '12px 16px 12px 0' }}>
+        onClick={isLoading ? undefined : startNewConversation}
+        aria-disabled={isLoading}
+        style={{ padding: '12px 16px 12px 0', opacity: isLoading ? 0.5 : 1 }}>
         <img src={addChatIcon} alt="add-chat" className="w-[16px] h-[16px] mr-[6px]" />
         New chat
       </div>
@@ -87,6 +91,8 @@ const AIAssistantHeader: FC<AIAssistantHeaderProps> = (props) => {
               'flex items-center justify-center w-[32px] h-[32px] hover:bg-[#F6F7FA] rounded-[6px] cursor-pointer',
               { 'bg-[#F6F7FA]': popupVisible }
             )}
+            aria-disabled={isLoading}
+            style={{ opacity: isLoading ? 0.5 : 1, pointerEvents: isLoading ? 'none' : 'auto' }}
             onClick={showChatHistoryPopup}>
             <img src={chatHistoryIcon} className="w-[14px] h-[14px]" />
           </div>

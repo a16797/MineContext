@@ -60,6 +60,8 @@ export type EventType =
   | 'completed'
   | 'stream_chunk'
   | 'stream_complete'
+  | 'error'
+  | 'interrupted'
 
 export type WorkflowStage =
   | 'init'
@@ -90,6 +92,7 @@ export interface StreamEvent {
 // Streaming chat service class
 export class ChatStreamService {
   private abortController?: AbortController
+  private inFlight = false
 
   // Send a streaming chat request
   async sendStreamMessage(
@@ -98,10 +101,14 @@ export class ChatStreamService {
     onError?: (error: Error) => void,
     onComplete?: () => void
   ): Promise<void> {
-    // Cancel the previous request
-    this.abortStream()
+    if (this.inFlight) {
+      throw new Error('上一条回答尚未结束，请等待完成后再发送。')
+    }
 
     this.abortController = new AbortController()
+    this.inFlight = true
+    let terminalEventReceived = false
+    let readerStarted = false
 
     try {
       // Use the baseURL of axiosInstance to ensure consistent ports
@@ -123,9 +130,25 @@ export class ChatStreamService {
       if (!reader) {
         throw new Error('Response body is not readable')
       }
+      readerStarted = true
 
       const decoder = new TextDecoder()
       let buffer = ''
+
+      const handleLine = (line: string) => {
+        const trimmedLine = line.trim()
+        if (!trimmedLine || !trimmedLine.startsWith('data: ')) return
+
+        try {
+          const eventData = JSON.parse(trimmedLine.slice(6))
+          if (['stream_complete', 'completed', 'fail', 'error', 'interrupted'].includes(eventData.type)) {
+            terminalEventReceived = true
+          }
+          onEvent(eventData as StreamEvent)
+        } catch (parseError) {
+          console.warn('Failed to parse SSE data:', line, parseError)
+        }
+      }
 
       while (true) {
         const { done, value } = await reader.read()
@@ -141,35 +164,34 @@ export class ChatStreamService {
         buffer = lines.pop() || '' // Keep the potentially incomplete last line
 
         for (const line of lines) {
-          if (line.trim() === '') continue
-
-          console.log('📨 Received SSE line:', line)
-
-          if (line.startsWith('data: ')) {
-            try {
-              const jsonStr = line.slice(6) // Remove 'data: ' prefix
-              console.log('🔍 Parsing JSON:', jsonStr)
-              const eventData = JSON.parse(jsonStr)
-              console.log('✅ Parsed successfully:', eventData)
-              onEvent(eventData as StreamEvent)
-            } catch (parseError) {
-              console.warn('❌ Failed to parse SSE data:', line, parseError)
-            }
-          } else {
-            console.log('⚠️ Non-data line:', line)
-          }
+          handleLine(line)
         }
       }
 
-      onComplete?.()
+      // Flush a partial UTF-8 sequence and process the final line when the
+      // server closes without a trailing newline.
+      buffer += decoder.decode()
+      if (buffer) handleLine(buffer)
+      if (terminalEventReceived) {
+        onComplete?.()
+      } else {
+        onError?.(new Error('回答连接意外中断'))
+      }
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
-        console.log('Stream request was aborted')
+        onComplete?.()
         return
       }
 
       console.error('Stream request failed:', error)
-      onError?.(error as Error)
+      if (terminalEventReceived) {
+        onComplete?.()
+      } else {
+        onError?.(readerStarted ? new Error('回答连接意外中断') : (error as Error))
+      }
+    } finally {
+      this.inFlight = false
+      this.abortController = undefined
     }
   }
 
@@ -177,7 +199,6 @@ export class ChatStreamService {
   abortStream(): void {
     if (this.abortController) {
       this.abortController.abort()
-      this.abortController = undefined
     }
   }
 

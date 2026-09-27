@@ -1,7 +1,7 @@
 // Copyright (c) 2025 Beijing Volcano Engine Technology Co., Ltd.
 // SPDX-License-Identifier: Apache-2.0
 
-import React, { useState, useCallback, useMemo, FC, useEffect } from 'react'
+import React, { useState, useCallback, useMemo, FC, useEffect, useRef } from 'react'
 import { Button, Input, Typography, Tag } from '@arco-design/web-react'
 import { IconStop } from '@arco-design/web-react/icon'
 import { useChatStream } from '@renderer/hooks/use-chat-stream'
@@ -56,6 +56,8 @@ export const MarkdownContent: React.FC<{ content: string }> = ({ content }) => {
 const AIAssistant: FC<AIAssistantProps> = (props) => {
   const { visible, onClose, pageName, initConversationId } = props
   const [message, setMessage] = useState('')
+  const [isSending, setIsSending] = useState(false)
+  const sendingRef = useRef(false)
   const {
     messages,
     streamingMessage,
@@ -83,9 +85,16 @@ const AIAssistant: FC<AIAssistantProps> = (props) => {
   })
   useEffect(() => {
     if (initConversationId) {
+      setConversationId(initConversationId)
       getConversationMessages(initConversationId)
     }
   }, [initConversationId])
+
+  const handleSelectConversation = useMemoizedFn((selectedConversationId: number) => {
+    if (isLoading || isSending) return
+    setConversationId(selectedConversationId)
+    getConversationMessages(selectedConversationId)
+  })
 
   // Get current page context information
   const getCurrentContext = useMemoizedFn((): ChatContext => {
@@ -115,10 +124,14 @@ const AIAssistant: FC<AIAssistantProps> = (props) => {
   })
 
   const handleSendMessage = useMemoizedFn(async () => {
-    if (!message.trim() || isLoading) return
-    if (!conversationId) {
-      // Create a new conversation if none exists
-      try {
+    if (!message.trim() || isLoading || isSending || sendingRef.current) return
+    // Lock synchronously because conversation creation is asynchronous and
+    // React state has not updated yet when a second Enter arrives.
+    sendingRef.current = true
+    setIsSending(true)
+    try {
+      if (!conversationId) {
+        // Create a new conversation if none exists
         const context = getCurrentContext()
         const response = await createConversation({ page_name: pageName, document_id: context.document_id })
         setConversationId(response.id)
@@ -126,14 +139,16 @@ const AIAssistant: FC<AIAssistantProps> = (props) => {
           await sendMessage(message, response.id, context)
         }
         setMessage('')
-      } catch (error) {
-        logger.error('Failed to create conversation:', error)
-        return
+      } else {
+        const context = getCurrentContext()
+        await sendMessage(message, conversationId, context)
+        setMessage('')
       }
-    } else {
-      const context = getCurrentContext()
-      await sendMessage(message, conversationId, context)
-      setMessage('')
+    } catch (error) {
+      logger.error('Failed to send message:', error)
+    } finally {
+      sendingRef.current = false
+      setIsSending(false)
     }
   })
 
@@ -189,10 +204,11 @@ const AIAssistant: FC<AIAssistantProps> = (props) => {
 
   // Start a new conversation (clear the current one)
   const startNewConversation = useCallback(() => {
+    if (isLoading || isSending || sendingRef.current) return
     clearChat()
     setConversationId(undefined)
     setMessage('')
-  }, [clearChat])
+  }, [clearChat, isLoading, isSending])
 
   // Merge all messages (history + streaming)
   const allMessages = useMemo(() => {
@@ -207,15 +223,18 @@ const AIAssistant: FC<AIAssistantProps> = (props) => {
   }, [messages, streamingMessage])
 
   const interruptMessage = useMemoizedFn(async () => {
-    if (currentMessageId !== -1) {
-      try {
+    try {
+      if (currentMessageId !== -1) {
         await interruptMessageGeneration(currentMessageId)
-        stopStreaming()
-      } catch (error) {
-        logger.error('Failed to interrupt message generation:', error)
       }
+    } catch (error) {
+      logger.error('Failed to interrupt message generation:', error)
+    } finally {
+      stopStreaming()
     }
   })
+
+  const chatBusy = isLoading || isSending
 
   return (
     <div
@@ -225,8 +244,9 @@ const AIAssistant: FC<AIAssistantProps> = (props) => {
         onClose={onClose}
         startNewConversation={startNewConversation}
         conversationId={conversationId || -1}
-        handleGetMessages={getConversationMessages}
+        handleGetMessages={handleSelectConversation}
         pageName={pageName}
+        isLoading={chatBusy}
       />
 
       <div className="flex-1 overflow-y-auto p-5 w-full">
@@ -295,12 +315,13 @@ const AIAssistant: FC<AIAssistantProps> = (props) => {
                   <Button
                     size="small"
                     type="primary"
+                    disabled={chatBusy}
                     onClick={() => {
                       // Retry the last message
                       const lastUserMessage = messages.findLast((msg) => msg.role === 'user')
                       if (lastUserMessage) {
                         const context = getCurrentContext()
-                        sendMessage(lastUserMessage.content, conversationId!, context)
+                        if (conversationId) sendMessage(lastUserMessage.content, conversationId, context)
                       }
                     }}
                     style={{ fontSize: 12 }}>
@@ -317,11 +338,11 @@ const AIAssistant: FC<AIAssistantProps> = (props) => {
         <div className="flex flex-col gap-2 bg-gray-50 rounded-xl p-3 border border-gray-200 transition-all duration-200">
           <div className="flex-1">
             <TextArea
-              placeholder={isLoading ? 'AI is thinking...' : 'Ask me anything'}
+              placeholder={chatBusy ? 'AI is thinking...' : 'Ask me anything'}
               value={message}
               onChange={setMessage}
               onKeyPress={handleKeyPress}
-              disabled={isLoading}
+              disabled={chatBusy}
               className="!bg-transparent !border-none !p-0 text-sm leading-6 resize-none focus:!shadow-none [&_.arco-textarea-wrapper]:bg-transparent"
               autoFocus
             />
@@ -341,7 +362,7 @@ const AIAssistant: FC<AIAssistantProps> = (props) => {
                 size="small"
                 icon={<img src={chatSendIcon} alt="chat-send" className="w-4 h-4" />}
                 onClick={handleSendMessage}
-                disabled={!message.trim()}
+                disabled={isSending || !message.trim()}
                 className="rounded-lg font-medium"
               />
             )}
