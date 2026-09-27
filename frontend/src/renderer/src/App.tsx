@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import React, { useState, useEffect, useRef } from 'react'
-import store, { persistor } from '@renderer/store'
+import store, { persistor, useAppSelector } from '@renderer/store'
 import { Provider } from 'react-redux'
 import { PersistGate } from 'redux-persist/integration/react'
 
@@ -35,15 +35,39 @@ function AppContent(): React.ReactElement {
   const [backendStatus, setBackendStatus] = useState<BackendStatus>('starting')
   const [showSetting, setShowSettings] = useState<boolean>(false)
   const [setupChecked, setSetupChecked] = useState<boolean>(false)
+  const screenSettings = useAppSelector((state) => state.setting.screenSettings)
+  const autoStartAttemptedRef = useRef(false)
+
+  const loadBackendHealth = useMemoizedFn(async () => {
+    const response = await axiosInstance.get('/api/health')
+    const health = response.data
+    if (health?.code !== 0 || health?.data?.status !== 'healthy') {
+      return false
+    }
+
+    setBackendStatus('running')
+    setShowSettings(!health.data.components.llm)
+    setSetupChecked(true)
+    return true
+  })
 
   const checkInitialStatus = useMemoizedFn(async () => {
+    let statusInfo: BackendStatusInfo | null = null
     try {
-      const statusInfo: BackendStatusInfo = await window.electron.ipcRenderer.invoke('backend:get-status')
-      setBackendStatus(statusInfo.status)
+      statusInfo = await window.electron.ipcRenderer.invoke('backend:get-status')
     } catch (error) {
       logger.error('Failed to get initial backend status:', { error })
-      setBackendStatus('error')
     }
+
+    try {
+      if (await loadBackendHealth()) {
+        return
+      }
+    } catch (error) {
+      logger.error('Failed to verify backend health:', { error })
+    }
+
+    setBackendStatus(statusInfo?.status || 'error')
   })
   const statusCheckIntervalRef = useRef<NodeJS.Timeout | null>(null)
   const clearStatusCheckInterval = useMemoizedFn(() => {
@@ -110,12 +134,7 @@ function AppContent(): React.ReactElement {
     const loadSetupStatus = async () => {
       for (let attempt = 0; attempt < 3 && !cancelled; attempt++) {
         try {
-          const response = await axiosInstance.get('/api/health')
-          if (!cancelled) {
-            setShowSettings(!response.data.data.components.llm)
-            setSetupChecked(true)
-          }
-          return
+          if (await loadBackendHealth()) return
         } catch (error) {
           logger.error('Failed to load setup status:', { error, attempt: attempt + 1 })
           if (attempt < 2) {
@@ -132,7 +151,58 @@ function AppContent(): React.ReactElement {
     return () => {
       cancelled = true
     }
-  }, [backendStatus])
+  }, [backendStatus, loadBackendHealth])
+
+  useEffect(() => {
+    if (backendStatus !== 'running' || !setupChecked || showSetting || autoStartAttemptedRef.current) {
+      return
+    }
+
+    autoStartAttemptedRef.current = true
+
+    const startScreenMonitoring = async () => {
+      const [savedSources, captureResult] = await Promise.all([
+        window.screenMonitorAPI.getSettings<{
+          screenList?: Array<{ id: string }>
+          windowList?: Array<{ id: string }>
+        }>('settings'),
+        window.screenMonitorAPI.getCaptureAllSources()
+      ])
+
+      if (!captureResult.success) {
+        throw new Error(captureResult.error || 'Failed to load capture sources')
+      }
+
+      const allSources = captureResult.sources || []
+      const savedIds = new Set([
+        ...(savedSources?.screenList || []).map((source) => source.id),
+        ...(savedSources?.windowList || []).map((source) => source.id)
+      ])
+      const selectedSources = allSources.filter((source) => savedIds.has(source.id))
+
+      if (!selectedSources.some((source) => source.type === 'screen')) {
+        const firstScreen = allSources.find((source) => source.type === 'screen')
+        if (firstScreen) selectedSources.unshift(firstScreen)
+      }
+
+      if (selectedSources.length === 0) {
+        throw new Error('No screen is available for recording')
+      }
+
+      await window.screenMonitorAPI.updateModelConfig(screenSettings)
+      await window.screenMonitorAPI.updateCurrentRecordApp(selectedSources)
+      await window.screenMonitorAPI.startTask()
+      logger.info('Screen monitoring started automatically', {
+        recordInterval: screenSettings.recordInterval,
+        recordingHours: screenSettings.recordingHours,
+        applyToDays: screenSettings.applyToDays
+      })
+    }
+
+    startScreenMonitoring().catch((error) => {
+      logger.error('Failed to start screen monitoring automatically:', error)
+    })
+  }, [backendStatus, setupChecked, showSetting, screenSettings])
 
   // Decide whether to display the application based on the status
   const pythonServerStarted = backendStatus === 'running'

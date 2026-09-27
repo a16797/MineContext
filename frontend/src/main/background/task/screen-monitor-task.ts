@@ -136,6 +136,14 @@ class ScreenMonitorTask extends ScheduleNextTask {
     }
   }
   private async handleScreenshotTask(source: CaptureSource, createTime: Dayjs) {
+    // A task may wait in the queue long enough to cross the recording window.
+    // Check again immediately before capturing so queued work cannot leak past
+    // the configured end time.
+    if (!this.checkCanRecord()) {
+      logger.debug(`Skip screenshot for source ${source.id}: outside recording hours`)
+      return
+    }
+
     const res = await screenshotService.takeScreenshot(source.id, createTime)
 
     if (res.success) {

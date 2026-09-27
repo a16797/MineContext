@@ -184,6 +184,21 @@ const ScreenMonitor: React.FC = () => {
     startStatsPolling()
   })
 
+  // Keep the main-process scheduler in sync with persisted renderer settings.
+  // This also covers returning to this page while recording is already active.
+  useEffect(() => {
+    window.screenMonitorAPI
+      .updateModelConfig({
+        recordInterval,
+        recordingHours,
+        enableRecordingHours,
+        applyToDays
+      })
+      .catch((error) => {
+        logger.error('Failed to sync screen monitor settings:', error)
+      })
+  }, [recordInterval, recordingHours, enableRecordingHours, applyToDays])
+
   // Stop monitoring
   const stopMonitoring = useMemoizedFn(async () => {
     if (isMonitoring) {
@@ -383,11 +398,22 @@ const ScreenMonitor: React.FC = () => {
     setApplicationVisible(false)
   })
 
-  const handleSaveSettings = useMemoizedFn(() => {
+  const handleSaveSettings = useMemoizedFn(async () => {
+    const nextConfig = {
+      recordInterval: tempRecordInterval,
+      recordingHours: tempRecordingHours,
+      enableRecordingHours: tempEnableRecordingHours,
+      applyToDays: tempApplyToDays
+    }
+
     setRecordInterval(tempRecordInterval)
     setEnableRecordingHours(tempEnableRecordingHours)
     setRecordingHours(tempRecordingHours as [string, string])
     setApplyToDays(tempApplyToDays)
+
+    // Apply changes to a running main-process task immediately; do not wait
+    // until the next manual start.
+    await window.screenMonitorAPI.updateModelConfig(nextConfig)
     setSettingsVisible(false)
   })
 
@@ -472,7 +498,7 @@ const ScreenMonitor: React.FC = () => {
       windowList
     })
     await window.screenMonitorAPI.updateCurrentRecordApp([...screenList, ...windowList])
-    handleSaveSettings()
+    await handleSaveSettings()
     await appStore.set(refreshCaptureSourcesFromSettingsAtom)
   })
 

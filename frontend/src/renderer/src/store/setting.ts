@@ -6,10 +6,10 @@ import { createSlice, PayloadAction } from '@reduxjs/toolkit'
 export type ApplyToDays = 'weekday' | 'everyday'
 
 export const defaultScreenSettings = {
-  recordInterval: 15,
-  enableRecordingHours: false,
+  recordInterval: 60,
+  enableRecordingHours: true,
   recordingHours: ['08:00:00', '20:00:00'] as [string, string],
-  applyToDays: 'weekday' as ApplyToDays
+  applyToDays: 'everyday' as ApplyToDays
 };
 
 export type ScreenSettings = typeof defaultScreenSettings;
