@@ -68,9 +68,9 @@ async def read_contexts(
     context_types = get_storage().get_available_context_types()
 
     return templates.TemplateResponse(
+        request,
         "contexts.html",
         {
-            "request": request,
             "contexts": [
                 ProcessedContextModel.from_processed_context(c, project_root)
                 for c in contexts_to_display
@@ -87,12 +87,12 @@ async def read_contexts(
 
 @router.get("/vector_search", response_class=HTMLResponse)
 async def vector_search_page(request: Request):
-    return templates.TemplateResponse("vector_search.html", {"request": request})
+    return templates.TemplateResponse(request, "vector_search.html")
 
 
 @router.get("/debug", response_class=HTMLResponse)
 async def debug_page(request: Request):
-    return templates.TemplateResponse("debug.html", {"request": request})
+    return templates.TemplateResponse(request, "debug.html")
 
 
 @router.get("/chat", response_class=HTMLResponse)
@@ -163,18 +163,18 @@ async def serve_file(file_path: str, _auth: str = auth_dependency):
 @router.get("/monitoring", response_class=HTMLResponse)
 async def monitoring_page(request: Request):
     """Monitoring page"""
-    return templates.TemplateResponse("monitoring.html", {"request": request})
+    return templates.TemplateResponse(request, "monitoring.html")
 
 
 @router.get("/assistant", response_class=HTMLResponse)
 async def assistant_page(request: Request):
     """Intelligent assistant page"""
     return templates.TemplateResponse(
-        "assistant.html", {"request": request, "title": "Intelligent Assistant"}
+        request, "assistant.html", {"title": "Intelligent Assistant"}
     )
 
 
 @router.get("/settings", response_class=HTMLResponse)
 async def settings_page(request: Request):
     """System settings page"""
-    return templates.TemplateResponse("settings.html", {"request": request, "title": "系统设置"})
+    return templates.TemplateResponse(request, "settings.html", {"title": "系统设置"})

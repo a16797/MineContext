@@ -52,7 +52,7 @@ async def vaults_workspace(request: Request):
     """
     try:
         return templates.TemplateResponse(
-            "agent_chat.html", {"request": request, "title": "Intelligent Agent Chat"}
+            request, "agent_chat.html", {"title": "Intelligent Agent Chat"}
         )
     except Exception as e:
         logger.exception(f"Failed to render document collaboration page: {e}")
@@ -67,7 +67,7 @@ async def note_editor_page(request: Request):
     """
     try:
         return templates.TemplateResponse(
-            "note_editor.html", {"request": request, "title": "Intelligent Note Editor"}
+            request, "note_editor.html", {"title": "Intelligent Note Editor"}
         )
     except Exception as e:
         logger.exception(f"Failed to render note editor page: {e}")

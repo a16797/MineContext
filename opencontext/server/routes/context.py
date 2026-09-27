@@ -89,13 +89,13 @@ async def read_context_detail(
     context = opencontext.get_context(detail_request.id, detail_request.context_type)
     if context is None:
         return templates.TemplateResponse(
-            "error.html", {"request": request, "message": "Context not found"}, status_code=404
+            request, "error.html", {"message": "Context not found"}, status_code=404
         )
 
     return templates.TemplateResponse(
+        request,
         "context_detail.html",
         {
-            "request": request,
             "context": ProcessedContextModel.from_processed_context(context, project_root),
         },
     )
