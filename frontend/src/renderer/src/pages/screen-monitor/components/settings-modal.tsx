@@ -109,14 +109,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
             </Form.Item>
             {tempEnableRecordingHours && (
               <div className="!mt-3">
-                <Form.Item label="Set recording hours" className="[&_.arco-form-item-label]:!text-xs">
+                <Form.Item label="Set recording hours · 北京时间 (UTC+8)" className="[&_.arco-form-item-label]:!text-xs">
                   <TimePicker.RangePicker
                     format="HH:mm"
                     value={tempRecordingHours}
                     onChange={(value) => onSetTempRecordingHours(value as [string, string])}
                   />
                 </Form.Item>
-                <Form.Item label="Apply to days" className="[&_.arco-form-item-label]: !text-xs">
+                <Form.Item label="Apply to days · 北京时间" className="[&_.arco-form-item-label]: !text-xs">
                   <Radio.Group value={tempApplyToDays} onChange={onSetTempApplyToDays}>
                     <Radio value="weekday" className="[&_.arco-radio-mask]: !border-[#d7daea]">
                       Only weekday

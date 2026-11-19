@@ -12,16 +12,9 @@ import { getBackendPort } from '@main/backend'
 import dayjs, { Dayjs } from 'dayjs'
 import { IpcChannel } from '@shared/IpcChannel'
 import { powerWatcher } from '../os/Power'
-import isBetween from 'dayjs/plugin/isBetween'
-import customParseFormat from 'dayjs/plugin/customParseFormat'
-import isSameOrAfter from 'dayjs/plugin/isSameOrAfter'
-import isSameOrBefore from 'dayjs/plugin/isSameOrBefore'
+import { canRecordInBeijing } from '@shared/recording-schedule'
 import { ScheduleNextTask } from './schedule-next-task'
 
-dayjs.extend(isBetween)
-dayjs.extend(customParseFormat)
-dayjs.extend(isSameOrAfter)
-dayjs.extend(isSameOrBefore)
 const queue = new PQueue({ concurrency: 3 })
 
 const logger = getLogger('ScreenMonitorTask')
@@ -228,39 +221,7 @@ class ScreenMonitorTask extends ScheduleNextTask {
   }
 
   private checkCanRecord = () => {
-    const { enableRecordingHours, applyToDays, recordingHours } = this.modelConfig
-
-    if (!enableRecordingHours) {
-      return true
-    }
-
-    const now = dayjs()
-
-    if (applyToDays === 'weekday') {
-      const currentDay = now.day()
-      if (currentDay === 0 || currentDay === 6) {
-        return false
-      }
-    }
-
-    if (recordingHours && Array.isArray(recordingHours) && recordingHours.length === 2) {
-      const [startTimeStr, endTimeStr] = recordingHours as [string, string] // e.g., ["09:00", "18:00"]
-
-      const start = dayjs(startTimeStr, 'HH:mm')
-      const end = dayjs(endTimeStr, 'HH:mm')
-
-      if (!start.isValid() || !end.isValid()) {
-        logger.warn(`invalid record time format: ${startTimeStr}-${endTimeStr}。skip check`)
-        return true
-      }
-
-      if (start.isAfter(end)) {
-        return now.isSameOrAfter(start) || now.isSameOrBefore(end)
-      } else {
-        return now.isBetween(start, end, null, '[]')
-      }
-    }
-    return true
+    return canRecordInBeijing(this.modelConfig)
   }
 }
 export { ScreenMonitorTask }

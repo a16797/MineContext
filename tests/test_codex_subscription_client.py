@@ -242,3 +242,57 @@ def test_codex_runtime_uses_isolated_file_credentials(monkeypatch):
     command = CodexSubscriptionRuntime({})._command()
 
     assert 'cli_auth_credentials_store="file"' in command
+
+
+def test_runtime_stages_inline_images_until_handle_closes(tmp_path):
+    import base64
+    from pathlib import Path
+    runtime = CodexSubscriptionRuntime({"codex_home": str(tmp_path/'home'), "cwd": str(tmp_path/'work')})
+    payload = b'\x89PNG\r\n\x1a\nexample'
+    original = {"threadId": "t", "input": [{"type": "text", "text": "look"},
+                {"type": "image", "url": "data:image/png;base64,"+base64.b64encode(payload).decode(), "detail": "high"}]}
+    requests = []
+    def request(method, params):
+        requests.append(params)
+        assert Path(params['input'][1]['path']).read_bytes() == payload
+        return {"turn": {"id": "turn"}}
+    runtime.request = request
+    handle = runtime.start_turn(original)
+    path = Path(requests[0]['input'][1]['path'])
+    assert requests[0]['input'][1]['type'] == 'localImage'
+    assert requests[0]['input'][1]['detail'] == 'high'
+    assert 'base64' not in json.dumps(requests[0])
+    assert original['input'][1]['type'] == 'image'
+    handle.close()
+    handle.close()
+    assert not path.exists()
+    assert not runtime._subscribers
+
+
+def test_runtime_staged_images_are_removed_when_start_fails(tmp_path):
+    runtime = CodexSubscriptionRuntime({"codex_home": str(tmp_path/'home'), "cwd": str(tmp_path/'work')})
+    def fail(method, params):
+        raise RuntimeError('start failed')
+    runtime.request = fail
+    with pytest.raises(RuntimeError, match='start failed'):
+        runtime.start_turn({"threadId":"t", "input":[{"type":"image","url":"data:image/png;base64,YQ=="}]})
+    assert not list((tmp_path/'work').iterdir())
+    assert not runtime._subscribers
+
+
+def test_runtime_rejects_bad_inline_image_without_sending(tmp_path):
+    runtime = CodexSubscriptionRuntime({"codex_home": str(tmp_path/'home'), "cwd": str(tmp_path/'work')})
+    runtime.request = lambda *args: pytest.fail('Malformed image was submitted')
+    with pytest.raises(ValueError):
+        runtime.start_turn({"threadId":"t", "input":[{"type":"image","url":"data:image/png;base64,!!"}]})
+    assert not runtime._subscribers
+
+
+def test_runtime_remote_images_and_text_pass_through():
+    runtime = CodexSubscriptionRuntime({})
+    params = {"threadId":"t", "input":[{"type":"text","text":"look"}, {"type":"image","url":"https://example.com/a.png"}]}
+    def request(method, wire):
+        assert wire == params
+        return {"turn":{"id":"turn"}}
+    runtime.request = request
+    runtime.start_turn(params).close()

@@ -9,6 +9,7 @@ handles ChatGPT cookies, access tokens, or API keys.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import os
 import queue
@@ -53,12 +54,13 @@ class CodexTurnHandle:
 
     _END = object()
 
-    def __init__(self, runtime: "CodexSubscriptionRuntime", thread_id: str, turn_id: str, q):
+    def __init__(self, runtime: "CodexSubscriptionRuntime", thread_id: str, turn_id: str, q, image_dir=None):
         self.runtime = runtime
         self.thread_id = thread_id
         self.turn_id = turn_id
         self._queue = q
         self._closed = False
+        self._image_dir = image_dir
 
     def next_event(self, timeout: Optional[float] = None) -> Mapping[str, Any]:
         try:
@@ -72,10 +74,15 @@ class CodexTurnHandle:
     def close(self) -> None:
         if not self._closed:
             self._closed = True
-            self.runtime.unsubscribe(self._queue)
-            close_thread = getattr(self.runtime, "unsubscribe_thread", None)
-            if close_thread:
-                close_thread(self.thread_id)
+            try:
+                self.runtime.unsubscribe(self._queue)
+                close_thread = getattr(self.runtime, "unsubscribe_thread", None)
+                if close_thread:
+                    close_thread(self.thread_id)
+            finally:
+                if self._image_dir:
+                    self._image_dir.cleanup()
+                    self._image_dir = None
 
 
 class CodexSubscriptionRuntime:
@@ -359,15 +366,52 @@ class CodexSubscriptionRuntime:
     def start_turn(self, params: Mapping[str, Any]) -> CodexTurnHandle:
         thread_id = str(params["threadId"])
         subscriber = self.subscribe()
+        image_dir = None
         try:
-            result = self.request("turn/start", params)
+            # Core logs the submitted UserInput at DEBUG. Inline data URIs
+            # therefore duplicate every screenshot in logs_*.sqlite. The
+            # official localImage input loads the same bytes without putting
+            # their base64 text into the submission log. Keep files alive for
+            # the whole turn, including streaming, cancellation and errors.
+            wire_params = dict(params)
+            wire_inputs = []
+            suffixes = {"image/png": ".png", "image/jpeg": ".jpg",
+                        "image/webp": ".webp", "image/gif": ".gif"}
+            for item in params.get("input", []):
+                url = item.get("url") if isinstance(item, Mapping) else None
+                if (isinstance(item, Mapping) and item.get("type") == "image"
+                        and isinstance(url, str) and url.startswith("data:image/")):
+                    header, encoded = url.split(",", 1)
+                    mime = header[5:].removesuffix(";base64")
+                    if not header.endswith(";base64") or mime not in suffixes:
+                        raise ValueError("Unsupported inline image format")
+                    if len(encoded) > 64 * 1024 * 1024:
+                        raise ValueError("Inline image exceeds 64 MiB encoded limit")
+                    data = base64.b64decode(encoded, validate=True)
+                    if not data:
+                        raise ValueError("Inline image is empty")
+                    if image_dir is None:
+                        _, cwd = self._paths()
+                        image_dir = tempfile.TemporaryDirectory(prefix="turn-images-", dir=cwd)
+                    path = Path(image_dir.name) / (str(len(wire_inputs)) + suffixes[mime])
+                    path.write_bytes(data)
+                    local = {"type": "localImage", "path": str(path)}
+                    if item.get("detail") is not None:
+                        local["detail"] = item["detail"]
+                    wire_inputs.append(local)
+                else:
+                    wire_inputs.append(item)
+            wire_params["input"] = wire_inputs
+            result = self.request("turn/start", wire_params)
             turn = result.get("turn", result) if isinstance(result, Mapping) else {}
             turn_id = str(turn.get("id") or result.get("turnId") or "")
             if not turn_id:
                 raise CodexSubscriptionError("Codex turn/start returned no turn id")
-            return CodexTurnHandle(self, thread_id, turn_id, subscriber)
+            return CodexTurnHandle(self, thread_id, turn_id, subscriber, image_dir)
         except Exception:
             self.unsubscribe(subscriber)
+            if image_dir:
+                image_dir.cleanup()
             raise
 
     def interrupt(self, thread_id: str, turn_id: str) -> Mapping[str, Any]:

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useMemoizedFn } from 'ahooks'
-import dayjs from 'dayjs'
+import { canRecordInBeijing } from '@shared/recording-schedule'
 import { ApplyToDays } from '@renderer/store/setting'
 
 export const useRecordingTimeValidation = (
@@ -12,52 +12,15 @@ export const useRecordingTimeValidation = (
   const [canRecord, setCanRecord] = useState(false)
 
   const checkCanRecord = useMemoizedFn(() => {
-    if (enableRecordingHours) {
-      const now = dayjs()
-      const currentDay = now.day()
-      const currentHour = now.hour()
-      const currentMinute = now.minute()
-
-      // Check if within allowed date range
-      if (applyToDays === 'weekday') {
-        // 0 = Sunday, 6 = Saturday, 1-5 = Monday-Friday
-        if (currentDay === 0 || currentDay === 6) {
-          setCanRecord(false)
-          return false
-        }
-      }
-
-      //       // Check if within allowed time range
-      if (recordingHours && recordingHours.length === 2) {
-        const [startTime, endTime] = recordingHours
-        const [startHour, startMinute] = startTime.split(':').map(Number)
-        const [endHour, endMinute] = endTime.split(':').map(Number)
-        const currentTotalMinutes = currentHour * 60 + currentMinute
-        const startTotalMinutes = startHour * 60 + startMinute
-        const endTotalMinutes = endHour * 60 + endMinute
-
-        // If end time is less than start time, it crosses midnight
-        if (endTotalMinutes < startTotalMinutes) {
-          // Current time is after start time or before end time
-          const result = currentTotalMinutes >= startTotalMinutes || currentTotalMinutes <= endTotalMinutes
-          setCanRecord(result)
-          return result
-        } else {
-          // Normal time range
-          const result = currentTotalMinutes >= startTotalMinutes && currentTotalMinutes <= endTotalMinutes
-          setCanRecord(result)
-          return result
-        }
-      }
-    }
-    setCanRecord(true)
-    return true
+    const result = canRecordInBeijing({ enableRecordingHours, recordingHours, applyToDays })
+    setCanRecord(result)
+    return result
   })
   //
   //   // Check recording status on mount
   useEffect(() => {
     checkCanRecord()
-  }, [checkCanRecord])
+  }, [checkCanRecord, enableRecordingHours, recordingHours, applyToDays])
   //   // Periodically check recording status
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null
